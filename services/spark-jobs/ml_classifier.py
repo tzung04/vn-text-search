@@ -10,12 +10,37 @@ from pyspark.ml.feature import HashingTF, IDF, StopWordsRemover, StringIndexer, 
 from pyspark.ml.pipeline import PipelineModel
 from pyspark.sql import DataFrame
 from pyspark.sql import functions as F
+from pyspark.sql.types import ArrayType, DataType, IntegerType, StringType
 
 from es_reader import DEFAULT_INDEX, get_spark, read_from_es
 
 
 DEFAULT_MODEL_PATH = "s3a://spark-output/topic-classifier/"
 DEFAULT_LABELED_OUTPUT_PATH = "s3a://spark-output/labeled-documents/"
+CONTRACT_COLUMNS = [
+    "id",
+    "title",
+    "content",
+    "tokens",
+    "token_count",
+    "category",
+    "topic_label",
+    "url",
+    "published_at",
+    "indexed_at",
+]
+CONTRACT_FALLBACK_TYPES: dict[str, DataType] = {
+    "id": StringType(),
+    "title": StringType(),
+    "content": StringType(),
+    "tokens": ArrayType(StringType()),
+    "token_count": IntegerType(),
+    "category": StringType(),
+    "topic_label": StringType(),
+    "url": StringType(),
+    "published_at": StringType(),
+    "indexed_at": StringType(),
+}
 
 
 def _prepare_training_data(df: DataFrame) -> DataFrame:
@@ -61,23 +86,14 @@ def _prediction_to_topic_expr(labels: Sequence[str]) -> F.Column:
 
 
 def _build_labeled_output(predictions: DataFrame, labels: Sequence[str]) -> DataFrame:
-    contract_columns = [
-        "id",
-        "title",
-        "content",
-        "tokens",
-        "token_count",
-        "category",
-        "topic_label",
-        "url",
-        "published_at",
-        "indexed_at",
-    ]
     df_labeled = predictions.withColumn("topic_label", _prediction_to_topic_expr(labels))
-    for col_name in contract_columns:
+    for col_name in CONTRACT_COLUMNS:
         if col_name not in df_labeled.columns:
-            df_labeled = df_labeled.withColumn(col_name, F.lit(None))
-    return df_labeled.select(*contract_columns)
+            df_labeled = df_labeled.withColumn(
+                col_name,
+                F.lit(None).cast(CONTRACT_FALLBACK_TYPES[col_name]),
+            )
+    return df_labeled.select(*CONTRACT_COLUMNS)
 
 
 def main() -> None:

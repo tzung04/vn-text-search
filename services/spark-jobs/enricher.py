@@ -2,12 +2,40 @@ from __future__ import annotations
 
 import argparse
 
+from pyspark.sql import DataFrame
 from pyspark.sql import functions as F
 
 from es_reader import DEFAULT_INDEX, get_spark, read_from_es
 
 
 DEFAULT_OUTPUT_PATH = "s3a://spark-output/enriched-documents/"
+
+
+def prepare_documents(df_docs: DataFrame) -> DataFrame:
+    return (
+        df_docs.select("id", "title", "category", "published_at")
+        .withColumn("date", F.to_date("published_at"))
+        .filter(F.col("category").isNotNull())
+        .filter(F.col("date").isNotNull())
+    )
+
+
+def build_daily_stats(df_docs_prepared: DataFrame) -> DataFrame:
+    return (
+        df_docs_prepared.groupBy("category", "date")
+        .agg(F.count("id").alias("daily_count"))
+        .hint("merge")
+    )
+
+
+def enrich_documents(df_docs: DataFrame) -> DataFrame:
+    df_prepared = prepare_documents(df_docs)
+    df_stats = build_daily_stats(df_prepared)
+    return (
+        df_prepared.hint("merge")
+        .join(df_stats, on=["category", "date"], how="left")
+        .select("id", "title", "category", "date", "daily_count")
+    )
 
 
 def main() -> None:
@@ -27,25 +55,8 @@ def main() -> None:
     # Enforce sort-merge join instead of broadcast join.
     spark.conf.set("spark.sql.autoBroadcastJoinThreshold", -1)
 
-    df_docs = (
-        read_from_es(spark, index=args.index)
-        .select("id", "title", "category", "published_at")
-        .withColumn("date", F.to_date("published_at"))
-        .filter(F.col("category").isNotNull())
-        .filter(F.col("date").isNotNull())
-    )
-
-    df_stats = (
-        df_docs.groupBy("category", "date")
-        .agg(F.count("id").alias("daily_count"))
-        .hint("merge")
-    )
-
-    df_enriched = (
-        df_docs.hint("merge")
-        .join(df_stats, on=["category", "date"], how="left")
-        .select("id", "title", "category", "date", "daily_count")
-    )
+    df_docs = read_from_es(spark, index=args.index)
+    df_enriched = enrich_documents(df_docs)
 
     df_enriched.write.mode("overwrite").parquet(args.output)
     print(f"Saved enriched documents to: {args.output}")

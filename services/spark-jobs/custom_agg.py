@@ -11,21 +11,7 @@ from es_reader import DEFAULT_INDEX, get_spark, read_from_es
 DEFAULT_OUTPUT_PATH = "s3a://spark-output/category-aggregates/"
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Compute custom category aggregations and ranking by avg token count."
-    )
-    parser.add_argument("--index", default=DEFAULT_INDEX, help="Elasticsearch index name")
-    parser.add_argument(
-        "--output",
-        default=DEFAULT_OUTPUT_PATH,
-        help="Output parquet path for custom aggregation results",
-    )
-    args = parser.parse_args()
-
-    spark = get_spark()
-    df = read_from_es(spark, index=args.index)
-
+def compute_category_aggregates(df):
     token_count = F.coalesce(F.col("token_count").cast("double"), F.lit(0.0))
     is_long_doc = F.when(token_count > 500, F.lit(1.0)).otherwise(F.lit(0.0))
 
@@ -44,7 +30,24 @@ def main() -> None:
     )
 
     window_spec = Window.orderBy(F.desc("avg_tokens"))
-    df_ranked = df_agg.withColumn("rank", F.rank().over(window_spec))
+    return df_agg.withColumn("rank", F.rank().over(window_spec))
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Compute custom category aggregations and ranking by avg token count."
+    )
+    parser.add_argument("--index", default=DEFAULT_INDEX, help="Elasticsearch index name")
+    parser.add_argument(
+        "--output",
+        default=DEFAULT_OUTPUT_PATH,
+        help="Output parquet path for custom aggregation results",
+    )
+    args = parser.parse_args()
+
+    spark = get_spark()
+    df = read_from_es(spark, index=args.index)
+    df_ranked = compute_category_aggregates(df)
 
     df_ranked.orderBy("rank").show(truncate=False)
     df_ranked.write.mode("overwrite").parquet(args.output)
