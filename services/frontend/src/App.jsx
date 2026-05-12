@@ -7,12 +7,52 @@ const API = "http://localhost:8000";
 const CATEGORIES = ["", "thoi-su", "kinh-doanh", "the-thao", "giai-tri", "giao-duc"];
 const PAGE_SIZE = 10;
 
+const DEMO_DOCUMENTS = [
+  {
+    id: "vnexpress_demo_1",
+    title: "Hà Nội triển khai hệ thống tìm kiếm văn bản tiếng Việt",
+    content:
+      "Pipeline Kafka, Spark Structured Streaming và Elasticsearch giúp lập chỉ mục tin tức tiếng Việt theo thời gian gần thực.",
+    category: "cong-nghe",
+    topic_label: "du-lieu-lon",
+    url: "https://vnexpress.net/"
+  },
+  {
+    id: "vnexpress_demo_2",
+    title: "Kinh doanh số tăng trưởng nhờ phân tích dữ liệu lớn",
+    content:
+      "Dashboard Grafana theo dõi tốc độ ingest, độ trễ Spark và tỷ lệ index vào Elasticsearch.",
+    category: "kinh-doanh",
+    topic_label: "kinh-te-so",
+    url: "https://vnexpress.net/kinh-doanh"
+  },
+  {
+    id: "vnexpress_demo_3",
+    title: "Đội tuyển Việt Nam có trận đấu tuyệt vời",
+    content:
+      "Bài viết thể thao được tokenizer tiếng Việt xử lý trước khi đưa vào chỉ mục tìm kiếm full-text.",
+    category: "the-thao",
+    topic_label: "bong-da",
+    url: "https://vnexpress.net/the-thao"
+  },
+  {
+    id: "vnexpress_demo_4",
+    title: "Giao diện demo hỗ trợ highlight kết quả tìm kiếm",
+    content:
+      "Người dùng có thể nhập từ khóa, lọc chuyên mục và chuyển trang trong React Search UI.",
+    category: "giai-tri",
+    topic_label: "demo",
+    url: "https://vnexpress.net/giai-tri"
+  }
+];
+
 function App() {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
   const [category, setCategory] = useState("");
   const [page, setPage] = useState(1);
   const [view, setView] = useState("search");
@@ -23,6 +63,7 @@ function App() {
 
     setLoading(true);
     setError("");
+    setNotice("");
 
     try {
       const res = await axios.get(`${API}/search`, {
@@ -38,7 +79,11 @@ function App() {
       setTotal(res.data.total || 0);
       setPage(newPage);
     } catch (err) {
-      setError("Không thể kết nối API. Đảm bảo FastAPI đang chạy ở port 8000.");
+      const demoResults = searchDemoDocuments(query, category, newPage);
+      setResults(demoResults.results);
+      setTotal(demoResults.total);
+      setPage(newPage);
+      setNotice("FastAPI /search chưa chạy ở port 8000, đang hiển thị kết quả demo.");
     }
 
     setLoading(false);
@@ -110,6 +155,7 @@ function App() {
             </div>
 
             {error && <div className="state-message error">{error}</div>}
+            {notice && <div className="notice-message">{notice}</div>}
 
             {!error && results.length === 0 && (
               <div className="state-message">
@@ -129,7 +175,7 @@ function App() {
                     {r.highlight?.title ? (
                       <span dangerouslySetInnerHTML={{ __html: r.highlight.title[0] }} />
                     ) : (
-                      r.title
+                      highlightText(r.title, query)
                     )}
                     <ExternalLink size={15} />
                   </a>
@@ -137,7 +183,7 @@ function App() {
                   {r.highlight?.content ? (
                     <p dangerouslySetInnerHTML={{ __html: r.highlight.content[0] }} />
                   ) : (
-                    <p>{r.content}</p>
+                    <p>{highlightText(r.content, query)}</p>
                   )}
                 </article>
               ))}
@@ -158,6 +204,38 @@ function App() {
         </>
       )}
     </main>
+  );
+}
+
+function searchDemoDocuments(query, category, page) {
+  const normalizedQuery = query.trim().toLocaleLowerCase("vi-VN");
+  const filtered = DEMO_DOCUMENTS.filter((item) => {
+    const matchesCategory = !category || item.category === category;
+    const text = `${item.title} ${item.content} ${item.category} ${item.topic_label}`.toLocaleLowerCase("vi-VN");
+    return matchesCategory && text.includes(normalizedQuery);
+  });
+  const start = (page - 1) * PAGE_SIZE;
+
+  return {
+    total: filtered.length,
+    results: filtered.slice(start, start + PAGE_SIZE)
+  };
+}
+
+function highlightText(text = "", keyword = "") {
+  const trimmed = keyword.trim();
+  if (!trimmed) return text;
+
+  const escaped = trimmed.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const regex = new RegExp(`(${escaped})`, "gi");
+  const parts = text.split(regex);
+
+  return parts.map((part, index) =>
+    part.toLocaleLowerCase("vi-VN") === trimmed.toLocaleLowerCase("vi-VN") ? (
+      <mark key={`${part}-${index}`}>{part}</mark>
+    ) : (
+      part
+    )
   );
 }
 
